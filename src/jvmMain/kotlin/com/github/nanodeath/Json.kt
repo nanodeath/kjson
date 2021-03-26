@@ -25,6 +25,14 @@ object StateMachines {
 class Json {
 
     fun parse(string: String): Sequence<Token> = parse(string.reader())
+    fun parseAny(string: String): Sequence<Token> {
+        val buffer = CharBuffer.allocate(1024)
+        buffer.put(string)
+        buffer.flip()
+        return sequence {
+            yieldAll(buffer.readAny())
+        }
+    }
 
     fun parse(reader: Reader): Sequence<Token> {
         val buffer = CharBuffer.allocate(1024)
@@ -86,12 +94,14 @@ class Json {
                 return@sequence
             }
             while (true) {
+                buffer.skipWhitespace()
                 yieldAll(buffer.readAny())
                 if (buffer.tryExpectStructural(Structural.EndArray)) {
                     yield(Token.EndArray)
                     return@sequence
                 }
                 buffer.expect(',')
+                buffer.skipWhitespace()
             }
         }
 
@@ -134,11 +144,14 @@ class Json {
         }
     }
 
-    private fun CharBuffer.tryExpectStructural(c: Structural): Boolean {
+    private fun CharBuffer.tryExpectStructural(c: Structural): Boolean = tryExpect(c.char)
+
+    private fun CharBuffer.tryExpect(c: Char): Boolean {
+        if (position() >= limit()) return false
         this.mark()
         skipWhitespace()
         return when (this.get()) {
-            c.char -> {
+            c -> {
                 skipWhitespace()
                 true
             }
@@ -179,7 +192,7 @@ class Json {
             val b = get()
             when {
                 b.isWhitespace() -> Unit
-                b in '0'..'9' -> {
+                b in '0'..'9' || b == '-' -> {
                     reset()
                     return readNumber()
                 }
@@ -193,23 +206,52 @@ class Json {
 
     private fun CharBuffer.readNumber(): Token.Number {
         val originalLimit = limit()
+        val negative = tryExpect('-')
         mark()
+        // read integer
         while (true) {
-            val current = get()
-            if (current.isWhitespace()) {
-                mark()
-                continue
-            }
-            if (current !in '0'..'9') {
-                limit(position() - 1)
+            if (position() >= limit()) {
                 reset()
                 break
             }
+            when (get()) {
+                in '0'..'9' -> {
+                }
+                else -> {
+                    limit(position() - 1)
+                    reset()
+                    break
+                }
+            }
         }
-        val number = toString()
+        val int = toString()
         limit(originalLimit)
-        position(position() + number.length)
-        return Token.Number(number)
+        position(position() + int.length)
+        val frac = if (tryExpect('.')) {
+            mark()
+            while (true) {
+                if (position() >= limit()) {
+                    reset()
+                    break
+                }
+                when (get()) {
+                    in '0'..'9' -> {
+                    }
+                    else -> {
+                        limit(position() - 1)
+                        reset()
+                        break
+                    }
+                }
+            }
+            toString().also { limit(originalLimit) }
+        } else null
+        val str = buildString {
+            if (negative) append('-')
+            append(int)
+            frac?.let { append('.').append(it) }
+        }
+        return Token.Number(str)
     }
 
     private fun CharBuffer.tryReadString(): Token.StringToken? {
