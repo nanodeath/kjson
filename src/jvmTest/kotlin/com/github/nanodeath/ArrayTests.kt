@@ -3,7 +3,15 @@ package com.github.nanodeath
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 
-class Tests {
+class ArrayTests {
+    @Test
+    fun `empty array`() {
+        assertThat(Json().parse("[]").toList()).containsExactly(
+            Token.StartArray,
+            Token.EndArray
+        )
+    }
+
     @Test
     fun `number array`() {
         assertThat(Json().parse("[1, 2, 3]".reader()).toList()).containsExactly(
@@ -27,6 +35,18 @@ class Tests {
 
     @Test
     fun `nested array`() {
+        assertThat(Json().parse("""[[1, 2]]""".reader()).toList()).containsExactly(
+            Token.StartArray,
+            Token.StartArray,
+            Token.Number("1"),
+            Token.Number("2"),
+            Token.EndArray,
+            Token.EndArray
+        )
+    }
+
+    @Test
+    fun `double-nested array`() {
         assertThat(Json().parse("""[[[1, 2]]]""".reader()).toList()).containsExactly(
             Token.StartArray,
             Token.StartArray,

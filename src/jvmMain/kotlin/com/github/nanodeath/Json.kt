@@ -24,6 +24,8 @@ object StateMachines {
 
 class Json {
 
+    fun parse(string: String): Sequence<Token> = parse(string.reader())
+
     fun parse(reader: Reader): Sequence<Token> {
         val buffer = CharBuffer.allocate(1024)
         return sequence {
@@ -40,132 +42,118 @@ class Json {
 
     private fun readObject(buffer: CharBuffer): Sequence<Token> {
         buffer.mark()
-        val b = buffer.get()
-        return when (b) {
-            '{' -> {
+        return when (val b = buffer.get()) {
+            Structural.BeginObject.char -> {
                 buffer.reset()
                 readMap(buffer)
             }
-            '[' -> {
+            Structural.BeginArray.char -> {
                 buffer.reset()
                 readArray(buffer)
-//                emptySequence()
             }
-            else -> printError(buffer, buffer.position() - 1, "Unexpected value $b")
+            else -> buffer.printError(buffer.position() - 1, "Unexpected value $b")
         }
     }
 
     private fun readMap(buffer: CharBuffer): Sequence<Token> =
         sequence {
-            expect(buffer, '{')
+            buffer.expectStructural(Structural.BeginObject)
             yield(Token.StartObject)
-            if (peek(buffer) == '}') {
+            if (buffer.tryExpectStructural(Structural.EndObject)) {
                 yield(Token.EndObject)
                 return@sequence
             }
             while (true) {
-                val readString = readString(buffer)
+                val readString = buffer.readString()
                 yield(Token.Key(readString))
-                expect(buffer, ':')
-                val value = readAny(buffer)
+                buffer.expectStructural(Structural.NameSeparator)
+                val value = buffer.readAny()
                 yieldAll(value)
-                if (peek(buffer) == '}') {
-                    expect(buffer, '}')
+                if (buffer.tryExpectStructural(Structural.EndObject)) {
                     yield(Token.EndObject)
                     return@sequence
                 }
-                expect(buffer, ',')
+                buffer.expectStructural(Structural.ValueSeparator)
             }
         }
 
     private fun readArray(buffer: CharBuffer): Sequence<Token> =
         sequence {
-            expect(buffer, '[')
+            buffer.expect('[')
             yield(Token.StartArray)
-            if (peek(buffer) == ']') {
-                yield(Token.EndObject)
+            if (buffer.tryExpectStructural(Structural.EndArray)) {
+                yield(Token.EndArray)
                 return@sequence
             }
             while (true) {
-                yieldAll(readAny(buffer))
-                if (tryExpect(buffer, ']')) {
+                yieldAll(buffer.readAny())
+                if (buffer.tryExpectStructural(Structural.EndArray)) {
                     yield(Token.EndArray)
                     return@sequence
                 }
-                expect(buffer, ',')
+                buffer.expect(',')
             }
         }
 
     private fun tryReadMap(buffer: CharBuffer): Sequence<Token>? {
-        if (peek(buffer) == '{') {
+        if (buffer.peek() == '{') {
             return readMap(buffer)
         }
         return null
     }
 
     private fun tryReadArray(buffer: CharBuffer): Sequence<Token>? {
-        if (peek(buffer) == '[') {
+        if (buffer.peek() == '[') {
             return readArray(buffer)
         }
         return null
     }
 
+    private fun CharBuffer.expectStructural(c: Structural) {
+        skipWhitespace()
+        expect(c.char, ignoreWhitespace = false)
+        skipWhitespace()
+    }
+
     @Suppress("SameParameterValue")
-    private fun expect(buffer: CharBuffer, vararg c: Char, ignoreWhitespace: Boolean = true): Char {
+    private fun CharBuffer.expect(vararg c: Char, ignoreWhitespace: Boolean = true): Char {
         while (true) {
-            val b = buffer.get()
+            val b = this.get()
             when {
                 b.isWhitespace() -> {
                     if (!ignoreWhitespace) {
-                        error("Whitespace at ${buffer.position() - 1}")
+                        error("Whitespace at ${this.position() - 1}")
                     }
                 }
                 b in c -> return b
-                else -> printError(
-                    buffer,
-                    buffer.position() - 1,
+                else -> this.printError(
+                    this.position() - 1,
                     "Unexpected character $b, expected ${c.joinToString()}"
                 )
             }
         }
     }
 
-    private fun tryExpect(buffer: CharBuffer, vararg c: Char, ignoreWhitespace: Boolean = true): Boolean {
-        buffer.mark()
-        while (true) {
-            val b = buffer.get()
-            when {
-                b in c -> return true
-                b.isWhitespace() -> {
-                    if (!ignoreWhitespace) {
-                        return false
-                    }
-                }
-                else -> {
-                    buffer.reset()
-                    return false
-                }
+    private fun CharBuffer.tryExpectStructural(c: Structural): Boolean {
+        this.mark()
+        skipWhitespace()
+        return when (this.get()) {
+            c.char -> {
+                skipWhitespace()
+                true
+            }
+            else -> {
+                this.reset()
+                false
             }
         }
     }
 
-    private fun peek(buffer: CharBuffer, skipWhitespace: Boolean = true): Char {
-        while (true) {
-            val b = buffer.get()
-            when {
-                skipWhitespace && b.isWhitespace() -> {
-                }
-                else -> {
-                    buffer.rewindToPreviousPosition()
-                    return b
-                }
-            }
-        }
-    }
+    private fun CharBuffer.peek(): Char = this[position()]
 
-    private fun printError(buffer: CharBuffer, position: Int, message: String): Nothing {
-        buffer.rewind()
-        System.err.println(buffer.toString())
+    private fun CharBuffer.printError(position: Int = position(), message: String): Nothing {
+        rewind()
+        System.err.println(toString())
         val sb = StringBuilder()
         repeat(position) {
             sb.append(' ')
@@ -177,87 +165,104 @@ class Json {
         throw ex
     }
 
-    private fun readAny(buffer: CharBuffer): Sequence<Token> = tryReadAny(buffer)!!
+    private fun CharBuffer.readAny(): Sequence<Token> = tryReadAny() ?: printError(message = "Failed to read any")
 
-    private fun tryReadAny(buffer: CharBuffer): Sequence<Token>? =
-        tryReadString(buffer)?.let { sequenceOf(it) }
-            ?: tryReadNumber(buffer)?.let { sequenceOf(it) }
-            ?: tryReadMap(buffer)
-            ?: tryReadArray(buffer)
+    private fun CharBuffer.tryReadAny(): Sequence<Token>? =
+        tryReadString()?.let { sequenceOf(it) }
+            ?: tryReadNumber()?.let { sequenceOf(it) }
+            ?: tryReadMap(this)
+            ?: tryReadArray(this)
 
-    private fun tryReadNumber(buffer: CharBuffer): Token.Number? {
-        buffer.mark()
+    private fun CharBuffer.tryReadNumber(): Token.Number? {
+        mark()
         while (true) {
-            val b = buffer.get()
+            val b = get()
             when {
                 b.isWhitespace() -> Unit
                 b in '0'..'9' -> {
-                    buffer.reset()
-                    return readNumber(buffer)
+                    reset()
+                    return readNumber()
                 }
                 else -> {
-                    buffer.reset()
+                    reset()
                     return null
                 }
             }
         }
     }
 
-    private fun readNumber(buffer: CharBuffer): Token.Number {
-        val originalLimit = buffer.limit()
-        buffer.mark()
+    private fun CharBuffer.readNumber(): Token.Number {
+        val originalLimit = limit()
+        mark()
         while (true) {
-            val current = buffer.get()
+            val current = get()
             if (current.isWhitespace()) {
-                buffer.mark()
+                mark()
                 continue
             }
             if (current !in '0'..'9') {
-                buffer.limit(buffer.position() - 1)
-                buffer.reset()
+                limit(position() - 1)
+                reset()
                 break
             }
         }
-        val number = buffer.toString()
-        buffer.limit(originalLimit)
-        buffer.position(buffer.position() + number.length)
+        val number = toString()
+        limit(originalLimit)
+        position(position() + number.length)
         return Token.Number(number)
     }
 
-    private fun tryReadString(buffer: CharBuffer): Token.StringToken? {
-        buffer.mark()
+    private fun CharBuffer.tryReadString(): Token.StringToken? {
+        mark()
         while (true) {
-            val b = buffer.get()
+            val b = get()
             when {
                 b.isWhitespace() -> Unit
                 b == '"' -> {
-                    buffer.rewindToPreviousPosition()
-                    return readString(buffer)
+                    rewindToPreviousPosition()
+                    return readString()
                 }
                 else -> {
-                    buffer.reset()
+                    reset()
                     return null
                 }
             }
         }
     }
 
-    private fun readString(buffer: CharBuffer): Token.StringToken {
-        val originalLimit = buffer.limit()
-        expect(buffer, '"')
-        buffer.mark()
+    private fun CharBuffer.readString(): Token.StringToken {
+        val originalLimit = limit()
+        this.expect('"')
+        mark()
         while (true) {
-            val current = buffer.get()
+            val current = get()
             if (current == '"') {
-                buffer.limit(buffer.position() - 1)
-                buffer.reset()
+                limit(position() - 1)
+                reset()
                 break
             }
         }
-        val number = buffer.toString()
-        buffer.limit(originalLimit)
-        buffer.position(buffer.position() + number.length + 1)
+        val number = toString()
+        limit(originalLimit)
+        position(position() + number.length + 1)
         return Token.StringToken(number)
+    }
+
+    private fun CharBuffer.skipWhitespace() {
+        while (position() < limit() && get(position()).isJsonSpace()) {
+            // consume
+            position(position() + 1)
+        }
+    }
+
+    private inline fun Char.isJsonSpace() =
+        this == space || this == horizontalTab || this == lineFeed || this == carriageReturn
+
+    private companion object {
+        const val space = 0x20.toChar()
+        const val horizontalTab = 0x09.toChar()
+        const val lineFeed = 0x0A.toChar()
+        const val carriageReturn = 0x0D.toChar()
     }
 }
 
@@ -268,6 +273,15 @@ fun main() {
 //    Json().parse("[42, 24, [18]]".reader()).joinToString(separator = "\n", transform = { "$it  (${it.javaClass.simpleName})" }).let { println(it) }
     Json().parse("""{"foo": "bar", "baz": 10, "nestedMap": {"nested": "value"}}""".reader())
         .joinToString(separator = "\n", transform = { "$it  (${it.javaClass.simpleName})" }).let { println(it) }
+}
+
+sealed class Structural(val char: Char) {
+    object BeginArray : Structural('[')
+    object BeginObject : Structural('{')
+    object EndArray : Structural(']')
+    object EndObject : Structural('}')
+    object NameSeparator : Structural(':')
+    object ValueSeparator : Structural(',')
 }
 
 sealed class Token(val value: String) {
