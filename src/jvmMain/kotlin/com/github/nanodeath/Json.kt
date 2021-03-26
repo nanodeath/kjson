@@ -3,6 +3,7 @@
 package com.github.nanodeath
 
 import java.io.Reader
+import java.nio.CharBuffer
 
 class Json(private val bufferSize: Int = 1024) {
 
@@ -158,6 +159,24 @@ class Json(private val bufferSize: Int = 1024) {
             ?: tryReadNumber()?.let { sequenceOf(it) }
             ?: tryReadMap(this)
             ?: tryReadArray(this)
+            ?: tryReadLiteral(this)
+
+    private fun tryReadLiteral(reader: Reader): Sequence<Token>? {
+        val longestLiteral = 5
+        reader.mark(longestLiteral)
+        val data = CharBuffer.allocate(longestLiteral)
+        reader.read(data)
+        data.flip()
+        return when (data.toString()) {
+            "null" -> sequenceOf(Token.Null)
+            "false" -> sequenceOf(Token.False)
+            "true" -> sequenceOf(Token.True)
+            else -> {
+                reader.reset()
+                null
+            }
+        }
+    }
 
     private fun Reader.tryReadNumber(): Token.Number? {
         val peek = peek()
@@ -270,6 +289,10 @@ sealed class Token(val value: String) {
     object EndArray : Token("]")
     object StartObject : Token("{")
     object EndObject : Token("}")
+    object Null : Token("null")
+    object False : Token("false")
+    object True : Token("true")
+
     class Number(value: String) : Token(value)
     class StringToken(value: String) : Token(value)
     class Key(token: StringToken) : Token(token.value)

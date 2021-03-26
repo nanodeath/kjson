@@ -82,9 +82,11 @@ kotlin {
         val jvmTest by getting {
             dependencies {
                 implementation(kotlin("test-junit5"))
-                implementation("org.junit.jupiter:junit-jupiter-api:5.6.0")
+                val junitVersion = "5.6.0"
+                implementation("org.junit.jupiter:junit-jupiter-api:$junitVersion")
+                implementation("org.junit.jupiter:junit-jupiter-params:$junitVersion")
                 implementation("org.assertj:assertj-core:3.19.0")
-                runtimeOnly("org.junit.jupiter:junit-jupiter-engine:5.6.0")
+                runtimeOnly("org.junit.jupiter:junit-jupiter-engine:$junitVersion")
             }
         }
         val jsMain by getting
