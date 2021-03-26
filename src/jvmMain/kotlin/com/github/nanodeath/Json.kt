@@ -208,6 +208,7 @@ class Json(private val bufferSize: Int = 1024) {
         val frac = if (tryExpect('.'.toInt())) {
             sb.clear()
             while (true) {
+                mark(1)
                 when (val d = read()) {
                     in digits -> sb.append(d.toChar())
                     else -> {
@@ -228,14 +229,14 @@ class Json(private val bufferSize: Int = 1024) {
     }
 
     private fun Reader.tryReadString(): Token.StringToken? =
-        if (peek() == '"'.toInt()) {
+        if (peek() == quote) {
             readString()
         } else {
             null
         }
 
     private fun Reader.readString(): Token.StringToken {
-        expect('"'.toInt())
+        expect(quote)
         val sb = StringBuilder()
         while (true) {
             val current = read()
@@ -251,7 +252,7 @@ class Json(private val bufferSize: Int = 1024) {
                 } else {
                     sb.appendCodePoint(read())
                 }
-            } else if (current == '"'.toInt()) {
+            } else if (current == quote) {
                 break
             } else {
                 sb.appendCodePoint(current)
@@ -282,6 +283,7 @@ class Json(private val bufferSize: Int = 1024) {
         const val carriageReturnInt = 0x0D
         const val escape = '\\'.toInt()
         const val u = 'u'.toInt()
+        const val quote = '"'.toInt()
     }
 }
 
