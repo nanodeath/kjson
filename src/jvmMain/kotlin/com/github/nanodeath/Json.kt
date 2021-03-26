@@ -3,155 +3,113 @@
 package com.github.nanodeath
 
 import java.io.Reader
-import java.nio.Buffer
-import java.nio.CharBuffer
 
-interface StateMachine {
-    suspend fun SequenceScope<Token>.offer(char: Char): StateMachine
-}
-
-object StateMachines {
-    object Collection : StateMachine {
-        override suspend fun SequenceScope<Token>.offer(char: Char): StateMachine {
-            when (char) {
-                '[' -> yield(Token.StartArray)
-                ']' -> yield(Token.EndArray)
-            }
-            return this@Collection
-        }
-    }
-}
-
-class Json {
+class Json(private val bufferSize: Int = 1024) {
 
     fun parse(string: String): Sequence<Token> = parse(string.reader())
-    fun parseAny(string: String): Sequence<Token> {
-        val buffer = CharBuffer.allocate(1024)
-        buffer.put(string)
-        buffer.flip()
+    fun parseValue(string: String): Sequence<Token> {
+        val reader = string.reader()
+        val markable = if (reader.markSupported()) reader else reader.buffered(bufferSize)
+        check(markable.markSupported())
         return sequence {
-            yieldAll(buffer.readAny())
+            yieldAll(markable.readAny())
         }
     }
 
     fun parse(reader: Reader): Sequence<Token> {
-        val buffer = CharBuffer.allocate(1024)
+        val markable = if (reader.markSupported()) reader else reader.buffered(bufferSize)
+        check(markable.markSupported())
         return sequence {
-            while (true) {
-                val bytesRead = reader.read(buffer)
-                if (bytesRead <= 0) break
-                buffer.flip()
-                while (buffer.remaining() > 0) {
-                    yieldAll(readObject(buffer))
-                }
-            }
+            yieldAll(readStructuredType(markable))
         }
     }
 
-    private fun readObject(buffer: CharBuffer): Sequence<Token> {
-        buffer.mark()
-        return when (val b = buffer.get()) {
-            Structural.BeginObject.char -> {
-                buffer.reset()
-                readMap(buffer)
-            }
-            Structural.BeginArray.char -> {
-                buffer.reset()
-                readArray(buffer)
-            }
-            else -> buffer.printError(buffer.position() - 1, "Unexpected value $b")
+    private fun readStructuredType(buffer: Reader): Sequence<Token> {
+        return when (val next = buffer.peek()) {
+            Structural.BeginObject.int -> readMap(buffer)
+            Structural.BeginArray.int -> readArray(buffer)
+            else -> buffer.printError(0, "Unexpected value $next")
         }
     }
 
-    private fun readMap(buffer: CharBuffer): Sequence<Token> =
+    private fun readMap(buffer: Reader): Sequence<Token> =
         sequence {
-            buffer.expectStructural(Structural.BeginObject)
+            buffer.expect(Structural.BeginObject)
             yield(Token.StartObject)
-            if (buffer.tryExpectStructural(Structural.EndObject)) {
+            if (buffer.tryExpect(Structural.EndObject)) {
                 yield(Token.EndObject)
                 return@sequence
             }
             while (true) {
                 val readString = buffer.readString()
                 yield(Token.Key(readString))
-                buffer.expectStructural(Structural.NameSeparator)
+                buffer.expect(Structural.NameSeparator)
                 val value = buffer.readAny()
                 yieldAll(value)
-                if (buffer.tryExpectStructural(Structural.EndObject)) {
+                if (buffer.tryExpect(Structural.EndObject)) {
                     yield(Token.EndObject)
                     return@sequence
                 }
-                buffer.expectStructural(Structural.ValueSeparator)
+                buffer.expect(Structural.ValueSeparator)
             }
         }
 
-    private fun readArray(buffer: CharBuffer): Sequence<Token> =
+    private fun readArray(buffer: Reader): Sequence<Token> =
         sequence {
-            buffer.expect('[')
+            buffer.expect('['.toInt())
             yield(Token.StartArray)
-            if (buffer.tryExpectStructural(Structural.EndArray)) {
+            if (buffer.tryExpect(Structural.EndArray)) {
                 yield(Token.EndArray)
                 return@sequence
             }
             while (true) {
                 buffer.skipWhitespace()
                 yieldAll(buffer.readAny())
-                if (buffer.tryExpectStructural(Structural.EndArray)) {
+                if (buffer.tryExpect(Structural.EndArray)) {
                     yield(Token.EndArray)
                     return@sequence
                 }
-                buffer.expect(',')
+                buffer.expect(','.toInt())
                 buffer.skipWhitespace()
             }
         }
 
-    private fun tryReadMap(buffer: CharBuffer): Sequence<Token>? {
-        if (buffer.peek() == '{') {
+    private fun tryReadMap(buffer: Reader): Sequence<Token>? {
+        if (buffer.peek() == '{'.toInt()) {
             return readMap(buffer)
         }
         return null
     }
 
-    private fun tryReadArray(buffer: CharBuffer): Sequence<Token>? {
-        if (buffer.peek() == '[') {
+    private fun tryReadArray(buffer: Reader): Sequence<Token>? {
+        if (buffer.peek() == '['.toInt()) {
             return readArray(buffer)
         }
         return null
     }
 
-    private fun CharBuffer.expectStructural(c: Structural) {
+    private fun Reader.expect(c: Structural) {
         skipWhitespace()
-        expect(c.char, ignoreWhitespace = false)
+        expect(c.int)
         skipWhitespace()
     }
 
-    @Suppress("SameParameterValue")
-    private fun CharBuffer.expect(vararg c: Char, ignoreWhitespace: Boolean = true): Char {
-        while (true) {
-            val b = this.get()
-            when {
-                b.isWhitespace() -> {
-                    if (!ignoreWhitespace) {
-                        error("Whitespace at ${this.position() - 1}")
-                    }
-                }
-                b in c -> return b
-                else -> this.printError(
-                    this.position() - 1,
-                    "Unexpected character $b, expected ${c.joinToString()}"
-                )
-            }
+    private fun Reader.expect(vararg c: Int): Int {
+        when (val b = this.read()) {
+            in c -> return b
+            else -> this.printError(
+                -1,
+                "Unexpected character $b, expected ${c.joinToString()}"
+            )
         }
     }
 
-    private fun CharBuffer.tryExpectStructural(c: Structural): Boolean = tryExpect(c.char)
-
-    private fun CharBuffer.tryExpect(c: Char): Boolean {
-        if (position() >= limit()) return false
-        this.mark()
+    private fun Reader.tryExpect(c: Structural): Boolean {
         skipWhitespace()
-        return when (this.get()) {
-            c -> {
+        this.
+        mark(1)
+        return when (this.read()) {
+            c.int -> {
                 skipWhitespace()
                 true
             }
@@ -162,10 +120,25 @@ class Json {
         }
     }
 
-    private fun CharBuffer.peek(): Char = this[position()]
+    private fun Reader.tryExpect(c: Int): Boolean {
+        mark(1)
+        return when (this.read()) {
+            c -> {
+                true
+            }
+            else -> {
+                this.reset()
+                false
+            }
+        }
+    }
 
-    private fun CharBuffer.printError(position: Int = position(), message: String): Nothing {
-        rewind()
+    private fun Reader.peek(): Int {
+        mark(1)
+        return read().also { reset() }
+    }
+
+    private fun Reader.printError(position: Int, message: String): Nothing {
         System.err.println(toString())
         val sb = StringBuilder()
         repeat(position) {
@@ -178,73 +151,50 @@ class Json {
         throw ex
     }
 
-    private fun CharBuffer.readAny(): Sequence<Token> = tryReadAny() ?: printError(message = "Failed to read any")
+    private fun Reader.readAny(): Sequence<Token> = tryReadAny() ?: printError(-1, message = "Failed to read any")
 
-    private fun CharBuffer.tryReadAny(): Sequence<Token>? =
+    private fun Reader.tryReadAny(): Sequence<Token>? =
         tryReadString()?.let { sequenceOf(it) }
             ?: tryReadNumber()?.let { sequenceOf(it) }
             ?: tryReadMap(this)
             ?: tryReadArray(this)
 
-    private fun CharBuffer.tryReadNumber(): Token.Number? {
-        mark()
-        while (true) {
-            val b = get()
-            when {
-                b.isWhitespace() -> Unit
-                b in '0'..'9' || b == '-' -> {
-                    reset()
-                    return readNumber()
-                }
-                else -> {
-                    reset()
-                    return null
-                }
-            }
+    private fun Reader.tryReadNumber(): Token.Number? {
+        val peek = peek()
+        return when (peek) {
+            in digits -> readNumber()
+            '-'.toInt() -> readNumber()
+            else -> null
         }
     }
 
-    private fun CharBuffer.readNumber(): Token.Number {
-        val originalLimit = limit()
-        val negative = tryExpect('-')
-        mark()
+    private fun Reader.readNumber(): Token.Number {
+        val negative = tryExpect('-'.toInt())
+        val sb = StringBuilder()
         // read integer
         while (true) {
-            if (position() >= limit()) {
-                reset()
-                break
-            }
-            when (get()) {
-                in '0'..'9' -> {
-                }
+            mark(1)
+            when (val d = read()) {
+                in digits -> sb.appendCodePoint(d)
                 else -> {
-                    limit(position() - 1)
                     reset()
                     break
                 }
             }
         }
-        val int = toString()
-        limit(originalLimit)
-        position(position() + int.length)
-        val frac = if (tryExpect('.')) {
-            mark()
+        val int = sb.toString()
+        val frac = if (tryExpect('.'.toInt())) {
+            sb.clear()
             while (true) {
-                if (position() >= limit()) {
-                    reset()
-                    break
-                }
-                when (get()) {
-                    in '0'..'9' -> {
-                    }
+                when (val d = read()) {
+                    in digits -> sb.appendCodePoint(d)
                     else -> {
-                        limit(position() - 1)
                         reset()
                         break
                     }
                 }
             }
-            toString().also { limit(originalLimit) }
+            sb.toString()
         } else null
         val str = buildString {
             if (negative) append('-')
@@ -254,62 +204,49 @@ class Json {
         return Token.Number(str)
     }
 
-    private fun CharBuffer.tryReadString(): Token.StringToken? {
-        mark()
-        while (true) {
-            val b = get()
-            when {
-                b.isWhitespace() -> Unit
-                b == '"' -> {
-                    rewindToPreviousPosition()
-                    return readString()
-                }
-                else -> {
-                    reset()
-                    return null
-                }
-            }
+    private fun Reader.tryReadString(): Token.StringToken? {
+        mark(1)
+        if (peek() == '"'.toInt()) {
+            return readString()
         }
+        return null
     }
 
-    private fun CharBuffer.readString(): Token.StringToken {
-        val originalLimit = limit()
-        this.expect('"')
-        mark()
+    private fun Reader.readString(): Token.StringToken {
+        this.expect('"'.toInt())
+        val sb = StringBuilder()
         while (true) {
-            val current = get()
-            if (current == '"') {
-                limit(position() - 1)
+            val current = read()
+            if (current == '"'.toInt()) {
+                break
+            } else {
+                sb.appendCodePoint(current)
+            }
+        }
+        return Token.StringToken(sb.toString())
+    }
+
+    private fun Reader.skipWhitespace() {
+        while (true) {
+            mark(1)
+            if (!read().isJsonSpace()) {
                 reset()
                 break
             }
         }
-        val number = toString()
-        limit(originalLimit)
-        position(position() + number.length + 1)
-        return Token.StringToken(number)
     }
 
-    private fun CharBuffer.skipWhitespace() {
-        while (position() < limit() && get(position()).isJsonSpace()) {
-            // consume
-            position(position() + 1)
-        }
-    }
-
-    private inline fun Char.isJsonSpace() =
-        this == space || this == horizontalTab || this == lineFeed || this == carriageReturn
+    private inline fun Int.isJsonSpace() =
+        this == spaceInt || this == horizontalTabInt || this == lineFeedInt || this == carriageReturnInt
 
     private companion object {
-        const val space = 0x20.toChar()
-        const val horizontalTab = 0x09.toChar()
-        const val lineFeed = 0x0A.toChar()
-        const val carriageReturn = 0x0D.toChar()
+        val digits = '0'.toInt()..'9'.toInt()
+        const val spaceInt = 0x20
+        const val horizontalTabInt = 0x09
+        const val lineFeedInt = 0x0A
+        const val carriageReturnInt = 0x0D
     }
 }
-
-private fun Buffer.previousPosition(): Int = position() - 1
-private fun Buffer.rewindToPreviousPosition() = position(previousPosition())
 
 fun main() {
 //    Json().parse("[42, 24, [18]]".reader()).joinToString(separator = "\n", transform = { "$it  (${it.javaClass.simpleName})" }).let { println(it) }
@@ -317,7 +254,9 @@ fun main() {
         .joinToString(separator = "\n", transform = { "$it  (${it.javaClass.simpleName})" }).let { println(it) }
 }
 
-sealed class Structural(val char: Char) {
+sealed class Structural(char: Char) {
+    val int: Int = char.toInt()
+
     object BeginArray : Structural('[')
     object BeginObject : Structural('{')
     object EndArray : Structural(']')

@@ -4,7 +4,7 @@ import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 
 class NumberTests {
-    private fun parse(str: String) = Json().parseAny(str).toList()
+    private fun parse(str: String) = Json().parseValue(str).toList()
 
     @Test
     fun integer() {
