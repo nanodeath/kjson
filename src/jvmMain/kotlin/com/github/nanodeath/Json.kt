@@ -202,11 +202,12 @@ class Json(private val bufferSize: Int = 1024) {
             }
         }
         val int = sb.toString()
+        require(int.length <= 1 || int[0] != '0') { "Leading zeros not allowed" }
         val frac = if (tryExpect('.'.toInt())) {
             sb.clear()
             while (true) {
                 when (val d = read()) {
-                    in digits -> sb.appendCodePoint(d)
+                    in digits -> sb.append(d.toChar())
                     else -> {
                         reset()
                         break
@@ -215,12 +216,13 @@ class Json(private val bufferSize: Int = 1024) {
             }
             sb.toString()
         } else null
-        val str = buildString {
+        with(sb) {
+            sb.clear()
             if (negative) append('-')
             append(int)
             frac?.let { append('.').append(it) }
         }
-        return Token.Number(str)
+        return Token.Number(sb.toString())
     }
 
     private fun Reader.tryReadString(): Token.StringToken? {
@@ -259,6 +261,7 @@ class Json(private val bufferSize: Int = 1024) {
         this == spaceInt || this == horizontalTabInt || this == lineFeedInt || this == carriageReturnInt
 
     private companion object {
+        const val ZERO = '0'.toInt()
         val digits = '0'.toInt()..'9'.toInt()
         const val spaceInt = 0x20
         const val horizontalTabInt = 0x09
