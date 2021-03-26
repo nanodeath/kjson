@@ -14,7 +14,7 @@ class Json(private val bufferSize: Int = 1024) {
         check(markable.markSupported())
         return sequence {
             yieldAll(markable.readAny())
-            require(markable.peek() == 1) { "Input contains multiple values, expected one" }
+            require(markable.peek() == -1) { "Input contains multiple values, expected one" }
         }
     }
 
@@ -227,20 +227,31 @@ class Json(private val bufferSize: Int = 1024) {
         return Token.Number(sb.toString())
     }
 
-    private fun Reader.tryReadString(): Token.StringToken? {
-        mark(1)
+    private fun Reader.tryReadString(): Token.StringToken? =
         if (peek() == '"'.toInt()) {
-            return readString()
+            readString()
+        } else {
+            null
         }
-        return null
-    }
 
     private fun Reader.readString(): Token.StringToken {
-        this.expect('"'.toInt())
+        expect('"'.toInt())
         val sb = StringBuilder()
         while (true) {
             val current = read()
-            if (current == '"'.toInt()) {
+            if (current == escape) {
+                // If it's an escape character, we immediately append whatever the next character is
+                // unless it's a `u`, and then we treat it as a unicode sequence.
+                if (tryExpect(u)) { // unicode escape characters, like \u1234
+                    val buffer = CharBuffer.allocate(4)
+                    read(buffer)
+                    val hex = buffer.flip().toString()
+                    hex.validateHex()
+                    sb.appendCodePoint(hex.toInt(16))
+                } else {
+                    sb.appendCodePoint(read())
+                }
+            } else if (current == '"'.toInt()) {
                 break
             } else {
                 sb.appendCodePoint(current)
@@ -269,6 +280,8 @@ class Json(private val bufferSize: Int = 1024) {
         const val horizontalTabInt = 0x09
         const val lineFeedInt = 0x0A
         const val carriageReturnInt = 0x0D
+        const val escape = '\\'.toInt()
+        const val u = 'u'.toInt()
     }
 }
 

@@ -5,11 +5,10 @@ import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
 
 class NumberTests {
-    private fun parse(str: String) = Json().parseValue(str).toList()
 
     @Test
     fun integer() {
-        val parse = parse("1")
+        val parse = valueToTokens("1")
         assertThat(parse).containsExactly(
             Token.Number("1")
         )
@@ -17,14 +16,14 @@ class NumberTests {
 
     @Test
     fun `negative number`() {
-        assertThat(parse("-1")).containsExactly(
+        assertThat(valueToTokens("-1")).containsExactly(
             Token.Number("-1")
         )
     }
 
     @Test
     fun `fraction`() {
-        assertThat(parse("0.1")).containsExactly(
+        assertThat(valueToTokens("0.1")).containsExactly(
             Token.Number("0.1")
         )
     }
@@ -32,7 +31,7 @@ class NumberTests {
     @Test
     fun `leading zeros not allowed`() {
         assertThatThrownBy {
-            parse("01")
+            valueToTokens("01")
         }
             .isInstanceOf(IllegalArgumentException::class.java)
     }
