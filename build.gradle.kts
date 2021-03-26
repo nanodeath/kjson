@@ -1,5 +1,9 @@
+import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
+
 plugins {
     kotlin("multiplatform") version "1.4.31"
+    id("com.github.johnrengelman.shadow") version "5.2.0"
+    application
 }
 
 group = "me.nanod"
@@ -9,6 +13,16 @@ repositories {
     mavenCentral()
 }
 
+java {
+    sourceCompatibility = JavaVersion.VERSION_11
+    targetCompatibility = JavaVersion.VERSION_11
+}
+
+application {
+    mainClassName = "com.github.nanodeath.TestJSONKt"
+}
+
+
 kotlin {
     jvm {
         compilations.all {
@@ -16,6 +30,25 @@ kotlin {
         }
         testRuns["test"].executionTask.configure {
             useJUnitPlatform()
+        }
+//
+//        tasks.register<CreateStartScripts>("scripts") {
+//
+//            mainClassName = "com.github.nanodeath.TestJSONKt"
+//            applicationName = "testjson"
+//            outputDir = File(project.buildDir, "scripts")
+//        }
+
+        tasks {
+            named<ShadowJar>("shadowJar") {
+                archiveBaseName.set("app")
+                mergeServiceFiles()
+                manifest {
+                    attributes(mapOf("Main-Class" to "com.github.nanodeath.TestJSONKt"))
+                }
+                from(kotlin.jvm().compilations.getByName("main").output)
+                configurations = mutableListOf(kotlin.jvm().compilations.getByName("main").compileDependencyFiles as Configuration)
+            }
         }
     }
     js(IR) {
