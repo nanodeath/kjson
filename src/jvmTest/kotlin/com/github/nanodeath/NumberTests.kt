@@ -36,4 +36,12 @@ class NumberTests {
         }
             .isInstanceOf(IllegalArgumentException::class.java)
     }
+
+    @Test
+    fun `number followed by letter not allowed`() {
+        assertThatThrownBy {
+            Json().parse("[1a]").toList()
+        }
+            .isInstanceOf(IllegalArgumentException::class.java)
+    }
 }

@@ -14,6 +14,7 @@ class Json(private val bufferSize: Int = 1024) {
         check(markable.markSupported())
         return sequence {
             yieldAll(markable.readAny())
+            require(markable.peek() == 1) { "Input contains multiple values, expected one" }
         }
     }
 
@@ -29,7 +30,7 @@ class Json(private val bufferSize: Int = 1024) {
         return when (val next = buffer.peek()) {
             Structural.BeginObject.int -> readMap(buffer)
             Structural.BeginArray.int -> readArray(buffer)
-            else -> buffer.printError(0, "Unexpected value $next")
+            else -> buffer.printError(0, "Unexpected value ${next.codepointToString()}")
         }
     }
 
@@ -100,14 +101,15 @@ class Json(private val bufferSize: Int = 1024) {
             in c -> return b
             else -> this.printError(
                 -1,
-                "Unexpected character $b, expected ${c.joinToString()}"
+                "Unexpected character ${b.codepointToString()}, expected ${c.joinToString { it.codepointToString() }}"
             )
         }
     }
 
+    private fun Int.codepointToString() = String(Character.toChars(this))
+
     private fun Reader.tryExpect(c: Structural): Boolean {
         skipWhitespace()
-        this.
         mark(1)
         return when (this.read()) {
             c.int -> {
@@ -147,7 +149,7 @@ class Json(private val bufferSize: Int = 1024) {
         }
         sb.append('^')
         System.err.println(sb)
-        val ex = IllegalStateException(message)
+        val ex = IllegalArgumentException(message)
         ex.stackTrace = ex.stackTrace.drop(1).toTypedArray()
         throw ex
     }
