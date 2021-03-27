@@ -81,7 +81,6 @@ kotlin {
         val jvmMain by getting {
             dependencies {
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.4.2")
-                implementation("org.jetbrains.kotlinx:kotlinx-io-jvm:0.1.16")
             }
         }
         val jvmTest by getting {

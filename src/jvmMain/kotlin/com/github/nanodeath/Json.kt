@@ -4,16 +4,16 @@ package com.github.nanodeath
 
 import kotlinx.coroutines.flow.*
 import java.io.Reader
-import java.nio.CharBuffer
 
 class Json {
 
     fun parse(string: String): Flow<Token> = parse(string.reader())
     fun parseValue(string: String): Flow<Token> {
         val reader = string.reader().markable()
-        check(reader.markSupported())
+        val markable = reader.markable()
+        check(markable.markSupported())
         return flow {
-            emitAll(reader.readAny())
+            emitAll(ReaderJsonSource(markable).readAny())
             require(reader.peek() == -1) { "Input contains multiple values, expected one" }
         }
     }
@@ -22,19 +22,19 @@ class Json {
         val markable = reader.markable()
         check(markable.markSupported())
         return flow {
-            emitAll(readStructuredType(markable))
+            emitAll(readStructuredType(ReaderJsonSource(markable)))
             require(reader.peek() == -1) { "Input contains multiple values, expected one" }
         }
     }
 
-    private fun readStructuredType(reader: Reader): Flow<Token> =
+    private fun readStructuredType(reader: JsonSource): Flow<Token> =
         when (val next = reader.peek()) {
             Structural.BeginObject.int -> readMap(reader)
             Structural.BeginArray.int -> readArray(reader)
             else -> reader.printError(0, "Unexpected value ${next.codepointToString()}")
         }
 
-    private fun readMap(reader: Reader): Flow<Token> =
+    private fun readMap(reader: JsonSource): Flow<Token> =
         flow {
             reader.expect(Structural.BeginObject)
             emit(Token.StartObject)
@@ -56,7 +56,7 @@ class Json {
             }
         }
 
-    private fun readArray(reader: Reader): Flow<Token> =
+    private fun readArray(reader: JsonSource): Flow<Token> =
         flow {
             reader.expect(Structural.BeginArray)
             emit(Token.StartArray)
@@ -74,24 +74,24 @@ class Json {
             }
         }
 
-    private fun tryReadMap(reader: Reader): Flow<Token>? =
+    private fun tryReadMap(reader: JsonSource): Flow<Token>? =
         if (reader.peek() == Structural.BeginObject.int) {
             readMap(reader)
         } else null
 
-    private fun tryReadArray(reader: Reader): Flow<Token>? {
+    private fun tryReadArray(reader: JsonSource): Flow<Token>? {
         return if (reader.peek() == Structural.BeginArray.int) {
             readArray(reader)
         } else null
     }
 
-    private fun Reader.expect(char: Structural) {
+    private fun JsonSource.expect(char: Structural) {
         skipWhitespace()
         expect(char.int)
         skipWhitespace()
     }
 
-    private fun Reader.expect(character: Int): Int {
+    private fun JsonSource.expect(character: Int): Int {
         when (val int = this.read()) {
             character -> return int
             else -> this.printError(
@@ -102,32 +102,24 @@ class Json {
     }
 
 
-
-    private fun Reader.tryExpect(c: Structural): Boolean {
+    private fun JsonSource.tryExpect(c: Structural): Boolean {
         skipWhitespace()
-        mark(1)
-        return when (this.read()) {
-            c.int -> {
-                skipWhitespace()
-                true
-            }
-            else -> {
-                this.reset()
-                false
-            }
+
+        return if (peek() == c.int) {
+            read()
+            skipWhitespace()
+            true
+        } else {
+            false
         }
     }
 
-    private fun Reader.tryExpect(c: Int): Boolean {
-        mark(1)
-        return when (this.read()) {
-            c -> {
-                true
-            }
-            else -> {
-                this.reset()
-                false
-            }
+    private fun JsonSource.tryExpect(c: Int): Boolean {
+        return if (peek() == c) {
+            read()
+            true
+        } else {
+            false
         }
     }
 
@@ -136,7 +128,7 @@ class Json {
         return read().also { reset() }
     }
 
-    private fun Reader.printError(position: Int, message: String): Nothing {
+    private fun JsonSource.printError(position: Int, message: String): Nothing {
         System.err.println(toString())
         val sb = StringBuilder()
         repeat(position) {
@@ -149,33 +141,26 @@ class Json {
         throw ex
     }
 
-    private fun Reader.readAny(): Flow<Token> = tryReadAny() ?: printError(-1, message = "Failed to read any")
+    private fun JsonSource.readAny(): Flow<Token> = tryReadAny() ?: printError(-1, message = "Failed to read any")
 
-    private fun Reader.tryReadAny(): Flow<Token>? =
+    private fun JsonSource.tryReadAny(): Flow<Token>? =
         tryReadString()?.let { flowOf(it) }
             ?: tryReadNumber()?.let { flowOf(it) }
             ?: tryReadMap(this)
             ?: tryReadArray(this)
             ?: tryReadLiteral(this)
 
-    private fun tryReadLiteral(reader: Reader): Flow<Token>? {
-        val longestLiteral = 5 // length of `false`
-        reader.mark(longestLiteral)
-        val data = CharBuffer.allocate(longestLiteral)
-        reader.read(data)
-        data.flip()
-        return when (data.toString()) {
-            "null" -> flowOf(Token.Null)
-            "false" -> flowOf(Token.False)
-            "true" -> flowOf(Token.True)
-            else -> {
-                reader.reset()
-                null
-            }
+    private fun tryReadLiteral(reader: JsonSource): Flow<Token>? {
+        val next5 = reader.peekString(5)
+        return when (next5) {
+            "null" -> flowOf(Token.Null).also { reader.skipCharacters(4) }
+            "false" -> flowOf(Token.False).also { reader.skipCharacters(5) }
+            "true" -> flowOf(Token.True).also { reader.skipCharacters(4) }
+            else -> null
         }
     }
 
-    private fun Reader.tryReadNumber(): Token.Number? {
+    private fun JsonSource.tryReadNumber(): Token.Number? {
         val peek = peek()
         return when (peek) {
             in digits -> readNumber()
@@ -184,35 +169,19 @@ class Json {
         }
     }
 
-    private fun Reader.readNumber(): Token.Number {
+    private fun JsonSource.readNumber(): Token.Number {
         val negative = tryExpect('-'.toInt())
         val sb = StringBuilder()
         // read integer
-        while (true) {
-            mark(1)
-            when (val d = read()) {
-                in digits -> sb.appendCodePoint(d)
-                else -> {
-                    reset()
-                    break
-                }
-            }
-        }
+        takeWhile { it in digits }
+            .forEach { sb.append(it.toChar()) }
         val int = sb.toString()
         require(int.length <= 1 || int[0] != '0') { "Leading zeros not allowed" }
         // read fraction
         val frac = if (tryExpect('.'.toInt())) {
             sb.clear()
-            while (true) {
-                mark(1)
-                when (val d = read()) {
-                    in digits -> sb.append(d.toChar())
-                    else -> {
-                        reset()
-                        break
-                    }
-                }
-            }
+            takeWhile { it in digits }
+                .forEach { sb.append(it.toChar()) }
             sb.toString()
         } else null
         // build up string representation again.
@@ -226,14 +195,14 @@ class Json {
         return Token.Number(sb.toString())
     }
 
-    private fun Reader.tryReadString(): Token.StringToken? =
+    private fun JsonSource.tryReadString(): Token.StringToken? =
         if (peek() == quote) {
             readString()
         } else {
             null
         }
 
-    private fun Reader.readString(): Token.StringToken {
+    private fun JsonSource.readString(): Token.StringToken {
         expect(quote)
         val sb = StringBuilder()
         while (true) {
@@ -242,10 +211,7 @@ class Json {
                 // If it's an escape character, we immediately append whatever the next character is
                 // unless it's a `u`, and then we treat it as a unicode sequence.
                 if (tryExpect(u)) { // unicode escape characters, like \u1234
-                    val buffer = CharBuffer.allocate(4)
-                    read(buffer)
-                    val hex = buffer.flip().toString()
-                    hex.validateHex()
+                    val hex = readString(4).also { it.validateHex() }
                     sb.appendCodePoint(hex.toInt(16))
                 } else {
                     sb.appendCodePoint(read())
@@ -259,13 +225,9 @@ class Json {
         return Token.StringToken(sb.toString())
     }
 
-    private fun Reader.skipWhitespace() {
-        while (true) {
-            mark(1)
-            if (!read().isJsonSpace()) {
-                reset()
-                break
-            }
+    private fun JsonSource.skipWhitespace() {
+        while (peek().isJsonSpace()) {
+            read()
         }
     }
 
