@@ -8,10 +8,11 @@ class CoreTests {
     @Test
     fun `large documents`() {
         val longText = "what if the document is large? if our internal buffer is insufficiently-sized, how to adapt?"
+            .repeat(100)
         val doc = """
             {"thought": "$longText"}
         """.trimIndent()
-        val list = Json(bufferSize = 32).parse(doc).toList()
+        val list = Json().parse(doc).toList()
         assertThat(list).containsExactly(
             Token.StartObject,
             Token.Key(Token.StringToken("thought")),

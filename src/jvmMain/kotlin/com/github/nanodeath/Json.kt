@@ -5,108 +5,102 @@ package com.github.nanodeath
 import java.io.Reader
 import java.nio.CharBuffer
 
-class Json(private val bufferSize: Int = 1024) {
+class Json {
 
     fun parse(string: String): Sequence<Token> = parse(string.reader())
     fun parseValue(string: String): Sequence<Token> {
-        val reader = string.reader()
-        val markable = if (reader.markSupported()) reader else reader.buffered(bufferSize)
-        check(markable.markSupported())
+        val reader = string.reader().markable()
+        check(reader.markSupported())
         return sequence {
-            yieldAll(markable.readAny())
-            require(markable.peek() == -1) { "Input contains multiple values, expected one" }
+            yieldAll(reader.readAny())
+            require(reader.peek() == -1) { "Input contains multiple values, expected one" }
         }
     }
 
     fun parse(reader: Reader): Sequence<Token> {
-        val markable = if (reader.markSupported()) reader else reader.buffered(bufferSize)
+        val markable = reader.markable()
         check(markable.markSupported())
         return sequence {
             yieldAll(readStructuredType(markable))
+            require(reader.peek() == -1) { "Input contains multiple values, expected one" }
         }
     }
 
-    private fun readStructuredType(buffer: Reader): Sequence<Token> {
-        return when (val next = buffer.peek()) {
-            Structural.BeginObject.int -> readMap(buffer)
-            Structural.BeginArray.int -> readArray(buffer)
-            else -> buffer.printError(0, "Unexpected value ${next.codepointToString()}")
+    private fun readStructuredType(reader: Reader): Sequence<Token> =
+        when (val next = reader.peek()) {
+            Structural.BeginObject.int -> readMap(reader)
+            Structural.BeginArray.int -> readArray(reader)
+            else -> reader.printError(0, "Unexpected value ${next.codepointToString()}")
         }
-    }
 
-    private fun readMap(buffer: Reader): Sequence<Token> =
+    private fun readMap(reader: Reader): Sequence<Token> =
         sequence {
-            buffer.expect(Structural.BeginObject)
+            reader.expect(Structural.BeginObject)
             yield(Token.StartObject)
-            if (buffer.tryExpect(Structural.EndObject)) {
+            if (reader.tryExpect(Structural.EndObject)) {
                 yield(Token.EndObject)
                 return@sequence
             }
             while (true) {
-                val readString = buffer.readString()
+                val readString = reader.readString()
                 yield(Token.Key(readString))
-                buffer.expect(Structural.NameSeparator)
-                val value = buffer.readAny()
+                reader.expect(Structural.NameSeparator)
+                val value = reader.readAny()
                 yieldAll(value)
-                if (buffer.tryExpect(Structural.EndObject)) {
+                if (reader.tryExpect(Structural.EndObject)) {
                     yield(Token.EndObject)
                     return@sequence
                 }
-                buffer.expect(Structural.ValueSeparator)
+                reader.expect(Structural.ValueSeparator)
             }
         }
 
-    private fun readArray(buffer: Reader): Sequence<Token> =
+    private fun readArray(reader: Reader): Sequence<Token> =
         sequence {
-            buffer.expect('['.toInt())
+            reader.expect(Structural.BeginArray)
             yield(Token.StartArray)
-            if (buffer.tryExpect(Structural.EndArray)) {
+            if (reader.tryExpect(Structural.EndArray)) {
                 yield(Token.EndArray)
                 return@sequence
             }
             while (true) {
-                buffer.skipWhitespace()
-                yieldAll(buffer.readAny())
-                if (buffer.tryExpect(Structural.EndArray)) {
+                yieldAll(reader.readAny())
+                if (reader.tryExpect(Structural.EndArray)) {
                     yield(Token.EndArray)
                     return@sequence
                 }
-                buffer.expect(','.toInt())
-                buffer.skipWhitespace()
+                reader.expect(Structural.ValueSeparator)
             }
         }
 
-    private fun tryReadMap(buffer: Reader): Sequence<Token>? {
-        if (buffer.peek() == '{'.toInt()) {
-            return readMap(buffer)
-        }
-        return null
+    private fun tryReadMap(reader: Reader): Sequence<Token>? =
+        if (reader.peek() == Structural.BeginObject.int) {
+            readMap(reader)
+        } else null
+
+    private fun tryReadArray(reader: Reader): Sequence<Token>? {
+        return if (reader.peek() == Structural.BeginArray.int) {
+            readArray(reader)
+        } else null
     }
 
-    private fun tryReadArray(buffer: Reader): Sequence<Token>? {
-        if (buffer.peek() == '['.toInt()) {
-            return readArray(buffer)
-        }
-        return null
-    }
-
-    private fun Reader.expect(c: Structural) {
+    private fun Reader.expect(char: Structural) {
         skipWhitespace()
-        expect(c.int)
+        expect(char.int)
         skipWhitespace()
     }
 
-    private fun Reader.expect(vararg c: Int): Int {
-        when (val b = this.read()) {
-            in c -> return b
+    private fun Reader.expect(character: Int): Int {
+        when (val int = this.read()) {
+            character -> return int
             else -> this.printError(
                 -1,
-                "Unexpected character ${b.codepointToString()}, expected ${c.joinToString { it.codepointToString() }}"
+                "Unexpected character ${int.codepointToString()}, expected ${character.codepointToString()}"
             )
         }
     }
 
-    private fun Int.codepointToString() = String(Character.toChars(this))
+
 
     private fun Reader.tryExpect(c: Structural): Boolean {
         skipWhitespace()
@@ -164,7 +158,7 @@ class Json(private val bufferSize: Int = 1024) {
             ?: tryReadLiteral(this)
 
     private fun tryReadLiteral(reader: Reader): Sequence<Token>? {
-        val longestLiteral = 5
+        val longestLiteral = 5 // length of `false`
         reader.mark(longestLiteral)
         val data = CharBuffer.allocate(longestLiteral)
         reader.read(data)
@@ -205,6 +199,7 @@ class Json(private val bufferSize: Int = 1024) {
         }
         val int = sb.toString()
         require(int.length <= 1 || int[0] != '0') { "Leading zeros not allowed" }
+        // read fraction
         val frac = if (tryExpect('.'.toInt())) {
             sb.clear()
             while (true) {
@@ -219,6 +214,8 @@ class Json(private val bufferSize: Int = 1024) {
             }
             sb.toString()
         } else null
+        // build up string representation again.
+        // eventually we'll want to do something smarter with the components.
         with(sb) {
             sb.clear()
             if (negative) append('-')
@@ -271,7 +268,7 @@ class Json(private val bufferSize: Int = 1024) {
         }
     }
 
-    private inline fun Int.isJsonSpace() =
+    private fun Int.isJsonSpace() =
         this == spaceInt || this == horizontalTabInt || this == lineFeedInt || this == carriageReturnInt
 
     private companion object {
@@ -323,3 +320,6 @@ sealed class Token(val value: String) {
 
     override fun hashCode(): Int = value.hashCode()
 }
+
+private fun Reader.markable() = if (this.markSupported()) this else this.buffered()
+private fun Int.codepointToString() = String(Character.toChars(this))
