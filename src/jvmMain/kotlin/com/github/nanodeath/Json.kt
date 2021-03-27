@@ -2,83 +2,84 @@
 
 package com.github.nanodeath
 
+import kotlinx.coroutines.flow.*
 import java.io.Reader
 import java.nio.CharBuffer
 
 class Json {
 
-    fun parse(string: String): Sequence<Token> = parse(string.reader())
-    fun parseValue(string: String): Sequence<Token> {
+    fun parse(string: String): Flow<Token> = parse(string.reader())
+    fun parseValue(string: String): Flow<Token> {
         val reader = string.reader().markable()
         check(reader.markSupported())
-        return sequence {
-            yieldAll(reader.readAny())
+        return flow {
+            emitAll(reader.readAny())
             require(reader.peek() == -1) { "Input contains multiple values, expected one" }
         }
     }
 
-    fun parse(reader: Reader): Sequence<Token> {
+    fun parse(reader: Reader): Flow<Token> {
         val markable = reader.markable()
         check(markable.markSupported())
-        return sequence {
-            yieldAll(readStructuredType(markable))
+        return flow {
+            emitAll(readStructuredType(markable))
             require(reader.peek() == -1) { "Input contains multiple values, expected one" }
         }
     }
 
-    private fun readStructuredType(reader: Reader): Sequence<Token> =
+    private fun readStructuredType(reader: Reader): Flow<Token> =
         when (val next = reader.peek()) {
             Structural.BeginObject.int -> readMap(reader)
             Structural.BeginArray.int -> readArray(reader)
             else -> reader.printError(0, "Unexpected value ${next.codepointToString()}")
         }
 
-    private fun readMap(reader: Reader): Sequence<Token> =
-        sequence {
+    private fun readMap(reader: Reader): Flow<Token> =
+        flow {
             reader.expect(Structural.BeginObject)
-            yield(Token.StartObject)
+            emit(Token.StartObject)
             if (reader.tryExpect(Structural.EndObject)) {
-                yield(Token.EndObject)
-                return@sequence
+                emit(Token.EndObject)
+                return@flow
             }
             while (true) {
                 val readString = reader.readString()
-                yield(Token.Key(readString))
+                emit(Token.Key(readString))
                 reader.expect(Structural.NameSeparator)
                 val value = reader.readAny()
-                yieldAll(value)
+                emitAll(value)
                 if (reader.tryExpect(Structural.EndObject)) {
-                    yield(Token.EndObject)
-                    return@sequence
+                    emit(Token.EndObject)
+                    return@flow
                 }
                 reader.expect(Structural.ValueSeparator)
             }
         }
 
-    private fun readArray(reader: Reader): Sequence<Token> =
-        sequence {
+    private fun readArray(reader: Reader): Flow<Token> =
+        flow {
             reader.expect(Structural.BeginArray)
-            yield(Token.StartArray)
+            emit(Token.StartArray)
             if (reader.tryExpect(Structural.EndArray)) {
-                yield(Token.EndArray)
-                return@sequence
+                emit(Token.EndArray)
+                return@flow
             }
             while (true) {
-                yieldAll(reader.readAny())
+                emitAll(reader.readAny())
                 if (reader.tryExpect(Structural.EndArray)) {
-                    yield(Token.EndArray)
-                    return@sequence
+                    emit(Token.EndArray)
+                    return@flow
                 }
                 reader.expect(Structural.ValueSeparator)
             }
         }
 
-    private fun tryReadMap(reader: Reader): Sequence<Token>? =
+    private fun tryReadMap(reader: Reader): Flow<Token>? =
         if (reader.peek() == Structural.BeginObject.int) {
             readMap(reader)
         } else null
 
-    private fun tryReadArray(reader: Reader): Sequence<Token>? {
+    private fun tryReadArray(reader: Reader): Flow<Token>? {
         return if (reader.peek() == Structural.BeginArray.int) {
             readArray(reader)
         } else null
@@ -148,25 +149,25 @@ class Json {
         throw ex
     }
 
-    private fun Reader.readAny(): Sequence<Token> = tryReadAny() ?: printError(-1, message = "Failed to read any")
+    private fun Reader.readAny(): Flow<Token> = tryReadAny() ?: printError(-1, message = "Failed to read any")
 
-    private fun Reader.tryReadAny(): Sequence<Token>? =
-        tryReadString()?.let { sequenceOf(it) }
-            ?: tryReadNumber()?.let { sequenceOf(it) }
+    private fun Reader.tryReadAny(): Flow<Token>? =
+        tryReadString()?.let { flowOf(it) }
+            ?: tryReadNumber()?.let { flowOf(it) }
             ?: tryReadMap(this)
             ?: tryReadArray(this)
             ?: tryReadLiteral(this)
 
-    private fun tryReadLiteral(reader: Reader): Sequence<Token>? {
+    private fun tryReadLiteral(reader: Reader): Flow<Token>? {
         val longestLiteral = 5 // length of `false`
         reader.mark(longestLiteral)
         val data = CharBuffer.allocate(longestLiteral)
         reader.read(data)
         data.flip()
         return when (data.toString()) {
-            "null" -> sequenceOf(Token.Null)
-            "false" -> sequenceOf(Token.False)
-            "true" -> sequenceOf(Token.True)
+            "null" -> flowOf(Token.Null)
+            "false" -> flowOf(Token.False)
+            "true" -> flowOf(Token.True)
             else -> {
                 reader.reset()
                 null

@@ -1,5 +1,7 @@
 package com.github.nanodeath
 
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.runBlocking
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
@@ -39,7 +41,9 @@ class NumberTests {
     @Test
     fun `number followed by letter not allowed`() {
         assertThatThrownBy {
-            Json().parse("[1a]").toList()
+            runBlocking {
+                Json().parse("[1a]").toList()
+            }
         }
             .isInstanceOf(IllegalArgumentException::class.java)
     }

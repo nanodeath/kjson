@@ -78,7 +78,12 @@ kotlin {
                 implementation(kotlin("test-annotations-common"))
             }
         }
-        val jvmMain by getting
+        val jvmMain by getting {
+            dependencies {
+                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.4.2")
+                implementation("org.jetbrains.kotlinx:kotlinx-io-jvm:0.1.16")
+            }
+        }
         val jvmTest by getting {
             dependencies {
                 implementation(kotlin("test-junit5"))
