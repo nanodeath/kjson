@@ -275,7 +275,6 @@ class Json(private val bufferSize: Int = 1024) {
         this == spaceInt || this == horizontalTabInt || this == lineFeedInt || this == carriageReturnInt
 
     private companion object {
-        const val ZERO = '0'.toInt()
         val digits = '0'.toInt()..'9'.toInt()
         const val spaceInt = 0x20
         const val horizontalTabInt = 0x09
@@ -285,12 +284,6 @@ class Json(private val bufferSize: Int = 1024) {
         const val u = 'u'.toInt()
         const val quote = '"'.toInt()
     }
-}
-
-fun main() {
-//    Json().parse("[42, 24, [18]]".reader()).joinToString(separator = "\n", transform = { "$it  (${it.javaClass.simpleName})" }).let { println(it) }
-    Json().parse("""{"foo": "bar", "baz": 10, "nestedMap": {"nested": "value"}}""".reader())
-        .joinToString(separator = "\n", transform = { "$it  (${it.javaClass.simpleName})" }).let { println(it) }
 }
 
 sealed class Structural(char: Char) {
