@@ -207,10 +207,10 @@ class Json {
             source.takeWhile { it in digits }
                 .collect { sb.append(it.toChar()) }
             val int = sb.toString().andLogIt()
+            // Leading zeros are not allowed unless the only character is a zero
             if (!(int.length <= 1 || int[0] != '0')) {
                 printErrorUnexpected(int.substring(0, 1), "non-zero digit", offset = -int.length)
             }
-//            require(int.length <= 1 || int[0] != '0') { "Leading zeros not allowed" }
             // read fraction
             val frac = if (tryExpect('.'.toInt())) {
                 sb.clear()
@@ -237,7 +237,11 @@ class Json {
             }
 
         private suspend fun readString(): Token.StringToken {
-            expect(quote)
+            try {
+                expect(quote)
+            } catch (e: EOFException) {
+                printErrorUnexpected("EOF", quote.codepointToString())
+            }
             val sb = StringBuilder()
             while (true) {
                 val current = source.read()

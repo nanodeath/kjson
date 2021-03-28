@@ -51,6 +51,6 @@ class IntegrationTests {
             parseAndBind("{")
         }
             .isInstanceOf(IllegalArgumentException::class.java)
-            .hasMessageContaining("Unexpected character EOF")
+            .hasMessageContaining("Unexpected EOF, expected: \"")
     }
 }
