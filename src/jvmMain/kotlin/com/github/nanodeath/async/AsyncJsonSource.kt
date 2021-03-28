@@ -41,7 +41,7 @@ internal class AsyncByteJsonSource(
     private val byteChannel: AsynchronousByteChannel,
     encoding: Charset = Charsets.UTF_8,
     bufferSize: Int = 4 * 1024
-) : AsyncJsonSource {
+) : AsyncJsonSource, AutoCloseable {
     //region Fields
     private val byteBuffer = ByteBuffer.allocate(bufferSize)
     private val charBuffer = CharBuffer.allocate(byteBuffer.capacity() / 2)
@@ -145,12 +145,11 @@ internal class AsyncByteJsonSource(
     //region Utility
     private suspend fun ensureChars(count: Int) {
         if (charBuffer.limit() - charBuffer.position() < count) {
-            println("ensureChars($count): ${charBuffer.limit()} - ${charBuffer.position()} < $count")
             charBuffer.compact()
             val bytesRead = fillByteBuffer()
-            val result = decoder.decode(byteBuffer, charBuffer, bytesRead == -1)
+            // TODO check result
+            decoder.decode(byteBuffer, charBuffer, bytesRead == -1)
             charBuffer.flip()
-            println(result)
         }
     }
 
@@ -169,6 +168,10 @@ internal class AsyncByteJsonSource(
                 }
             })
         }
+    }
+
+    override fun close() {
+        byteChannel.close()
     }
     //endregion
 }

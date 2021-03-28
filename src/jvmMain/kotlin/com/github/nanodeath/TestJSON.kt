@@ -9,7 +9,7 @@ import kotlin.system.exitProcess
 fun main(args: Array<String>) {
     val file = args.first().let { File(it) }
     try {
-        file.bufferedReader().use { br ->
+        file.inputStream().use { br ->
             runBlocking {
                 Json().parse(br).toList().joinToString().let { System.err.println(it) }
             }

@@ -1,6 +1,5 @@
 package com.github.nanodeath
 
-import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
@@ -9,7 +8,7 @@ class ArrayTests {
     @Test
     fun `empty array`() {
         runBlocking {
-            assertThat(Json().parse("[]").toList()).containsExactly(
+            assertThat(parseToTokens("[]")).containsExactly(
                 Token.StartArray,
                 Token.EndArray
             )
@@ -19,7 +18,7 @@ class ArrayTests {
     @Test
     fun `number array`() {
         runBlocking {
-            assertThat(Json().parse("[1, 2, 3]".reader()).toList()).containsExactly(
+            assertThat(parseToTokens("[1, 2, 3]")).containsExactly(
                 Token.StartArray,
                 Token.Number("1"),
                 Token.Number("2"),
@@ -32,7 +31,7 @@ class ArrayTests {
     @Test
     fun `string array`() {
         runBlocking {
-            assertThat(Json().parse("""["foo", "bar"]""".reader()).toList()).containsExactly(
+            assertThat(parseToTokens("""["foo", "bar"]""")).containsExactly(
                 Token.StartArray,
                 Token.StringToken("foo"),
                 Token.StringToken("bar"),
@@ -44,7 +43,7 @@ class ArrayTests {
     @Test
     fun `nested array`() {
         runBlocking {
-            assertThat(Json().parse("""[[1, 2]]""".reader()).toList()).containsExactly(
+            assertThat(parseToTokens("""[[1, 2]]""")).containsExactly(
                 Token.StartArray,
                 Token.StartArray,
                 Token.Number("1"),
@@ -58,7 +57,7 @@ class ArrayTests {
     @Test
     fun `double-nested array`() {
         runBlocking {
-            assertThat(Json().parse("""[[[1, 2]]]""".reader()).toList()).containsExactly(
+            assertThat(parseToTokens("""[[[1, 2]]]""")).containsExactly(
                 Token.StartArray,
                 Token.StartArray,
                 Token.StartArray,
