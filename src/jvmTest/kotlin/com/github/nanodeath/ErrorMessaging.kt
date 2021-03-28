@@ -117,4 +117,20 @@ class ErrorMessaging {
                ^
         """.trimIndent())
     }
+
+    @Test
+    fun `unterminated fractional number`() {
+        val (out, err) = captureStreams {
+            assertThatThrownBy {
+                valueToTokens("1.")
+            }
+                .isInstanceOf(IllegalArgumentException::class.java)
+                .hasMessage("Unterminated fractional number, expected digit")
+        }
+        assertThat(out).isEmpty()
+        assertThat(err.trim()).isEqualToNormalizingNewlines("""
+            1.
+              ^
+        """.trimIndent())
+    }
 }

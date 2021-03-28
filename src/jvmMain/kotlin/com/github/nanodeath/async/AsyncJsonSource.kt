@@ -82,7 +82,7 @@ internal class AsyncByteJsonSource(
             while (true) {
                 val next = peek()
                 if (next >= 0 && predicate(next)) {
-                    emit(read())
+                    emit(readUnchecked())
                 } else {
                     break
                 }

@@ -216,7 +216,11 @@ class Json {
                 sb.clear()
                 source.takeWhile { it in digits }
                     .collect { sb.append(it.toChar()) }
-                sb.toString().andLogIt()
+                sb.toString().andLogIt().also {
+                    if (it.isEmpty()) {
+                        printError("Unterminated fractional number, expected digit")
+                    }
+                }
             } else null
             // build up string representation again.
             // eventually we'll want to do something smarter with the components.
