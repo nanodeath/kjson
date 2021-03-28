@@ -6,6 +6,7 @@ import com.github.nanodeath.async.AsyncByteJsonSource
 import com.github.nanodeath.async.AsyncInputStream
 import com.github.nanodeath.async.AsyncJsonSource
 import kotlinx.coroutines.flow.*
+import java.io.EOFException
 import java.io.InputStream
 import java.nio.channels.AsynchronousByteChannel
 
@@ -16,7 +17,7 @@ class Json {
         flow {
             AsyncByteJsonSource(asynchronousByteChannel).use { source ->
                 emitAll(SourceContext(source).readStructuredType())
-                require(source.peek() == -1) { "Input contains multiple values, expected one" }
+                require(source.peek() == EOF) { "Input contains multiple values, expected one" }
             }
         }
 
@@ -24,12 +25,12 @@ class Json {
         flow {
             AsyncByteJsonSource(AsyncInputStream(string.byteInputStream())).use { source ->
                 emitAll(SourceContext(source).readAny())
-                require(source.peek() == -1) { "Input contains multiple values, expected one" }
+                require(source.peek() == EOF) { "Input contains multiple values, expected one" }
             }
         }
 
-    internal class SourceContext(private val source: AsyncJsonSource) {
-        private val slidingWindow = SlidingCharWindow(10)
+    internal class SourceContext(private val source: AsyncJsonSource, private val context: Int = 25) {
+        private val slidingWindow = SlidingCharWindow(context)
 
         suspend fun readStructuredType(): Flow<Token> =
             when (val next = source.peek()) {
@@ -56,7 +57,16 @@ class Json {
                         emit(Token.EndObject)
                         return@flow
                     }
-                    expect(Structural.ValueSeparator)
+                    try {
+                        expect(Structural.ValueSeparator)
+                    } catch (e: EOFException) {
+                        printErrorUnexpected(
+                            "EOF",
+                            Structural.ValueSeparator.toString(),
+                            Structural.EndObject.toString(),
+                            offset = 0
+                        )
+                    }
                 }
             }
 
@@ -74,7 +84,16 @@ class Json {
                         emit(Token.EndArray)
                         return@flow
                     }
-                    expect(Structural.ValueSeparator)
+                    try {
+                        expect(Structural.ValueSeparator)
+                    } catch (e: EOFException) {
+                        printErrorUnexpected(
+                            "EOF",
+                            Structural.ValueSeparator.toString(),
+                            Structural.EndArray.toString(),
+                            offset = 0
+                        )
+                    }
                 }
             }
 
@@ -97,9 +116,12 @@ class Json {
         private suspend fun expect(character: Int): Int {
             when (val int = source.read().andLogIt()) {
                 character -> return int
-                else -> printError(
-                    "Unexpected character ${int.codepointToString()}, expected ${character.codepointToString()}"
-                )
+                EOF -> {
+                    throw EOFException()
+                }
+                else -> {
+                    printErrorUnexpected(int.codepointToString(), character.codepointToString())
+                }
             }
         }
 
@@ -123,18 +145,29 @@ class Json {
                 false
             }
 
-        private suspend fun printError(message: String): Nothing {
-            val context = slidingWindow.string()
-            val after = source.peekString(20)
-            System.err.println(context + after)
+        private suspend fun printErrorUnexpected(unexpected: String, vararg expected: String, offset: Int = -1): Nothing {
+            val suffix = when(expected.size) {
+                1 -> "expected:"
+                else -> "expected 1 of ${expected.size} options:"
+            }
+            printError(
+                "Unexpected $unexpected, $suffix ${expected.joinToString()}",
+                offset = offset
+            )
+        }
+
+        private suspend fun printError(message: String, offset: Int = 0): Nothing {
+            val before = slidingWindow.string()
+            val after = source.peekString(this.context)
+            System.err.println(before + after)
             val sb = StringBuilder()
-            repeat(context.length - 1) {
+            repeat(before.length + offset) {
                 sb.append(' ')
             }
             sb.append('^')
             System.err.println(sb)
             val ex = IllegalArgumentException(message)
-            ex.stackTrace = ex.stackTrace.drop(1).toTypedArray()
+            ex.stackTrace = ex.stackTrace.dropWhile { "printError" in it.methodName }.toTypedArray()
             throw ex
         }
 
@@ -174,7 +207,10 @@ class Json {
             source.takeWhile { it in digits }
                 .collect { sb.append(it.toChar()) }
             val int = sb.toString().andLogIt()
-            require(int.length <= 1 || int[0] != '0') { "Leading zeros not allowed" }
+            if (!(int.length <= 1 || int[0] != '0')) {
+                printErrorUnexpected(int.substring(0, 1), "non-zero digit", offset = -int.length)
+            }
+//            require(int.length <= 1 || int[0] != '0') { "Leading zeros not allowed" }
             // read fraction
             val frac = if (tryExpect('.'.toInt())) {
                 sb.clear()
@@ -216,11 +252,16 @@ class Json {
                     }
                 } else if (current == quote) {
                     break
+                } else if (current == EOF) {
+                    sb.toString().andLogIt()
+                    printErrorUnexpected("EOF", quote.codepointToString(), "basically anything", offset = 0)
                 } else {
                     sb.appendCodePoint(current)
                 }
             }
-            return Token.StringToken(sb.toString().andLogIt())
+            val result = sb.toString().andLogIt()
+            quote.andLogIt()
+            return Token.StringToken(result)
         }
 
         private suspend fun skipWhitespace() {
@@ -233,7 +274,14 @@ class Json {
             this == spaceInt || this == horizontalTabInt || this == lineFeedInt || this == carriageReturnInt
 
 
-        private fun Int.andLogIt() = also { slidingWindow.append(it) }
+        private fun Int.andLogIt() = also {
+            if (it == -1) {
+//                slidingWindow.append('␃')
+            } else {
+                slidingWindow.append(it)
+            }
+        }
+
         private fun String.andLogIt() = also { slidingWindow.append(it) }
     }
 
@@ -249,15 +297,17 @@ class Json {
     }
 }
 
-sealed class Structural(char: Char) {
+sealed class Structural(private val char: Char, private val name: String) {
     val int: Int = char.toInt()
 
-    object BeginArray : Structural('[')
-    object BeginObject : Structural('{')
-    object EndArray : Structural(']')
-    object EndObject : Structural('}')
-    object NameSeparator : Structural(':')
-    object ValueSeparator : Structural(',')
+    override fun toString() = "$char ($name)"
+
+    object BeginArray : Structural('[', "left square bracket")
+    object BeginObject : Structural('{', "left curly bracket")
+    object EndArray : Structural(']', "right square bracket")
+    object EndObject : Structural('}', "right curly bracket")
+    object NameSeparator : Structural(':', "colon")
+    object ValueSeparator : Structural(',', "comma")
 }
 
 sealed class Token(val value: String) {
@@ -287,4 +337,5 @@ sealed class Token(val value: String) {
     override fun hashCode(): Int = value.hashCode()
 }
 
-private fun Int.codepointToString() = if (this == -1) "EOF" else String(Character.toChars(this))
+private fun Int.codepointToString() = if (this == EOF) "EOF" else String(Character.toChars(this))
+private const val EOF = -1
