@@ -146,10 +146,10 @@ class Json {
 
     private suspend fun tryReadLiteral(reader: AsyncJsonSource): Flow<Token>? {
         val next5 = reader.peekString(5)
-        return when (next5) {
-            "null" -> flowOf(Token.Null).also { reader.skipCharacters(4) }
-            "false" -> flowOf(Token.False).also { reader.skipCharacters(5) }
-            "true" -> flowOf(Token.True).also { reader.skipCharacters(4) }
+        return when {
+            next5.startsWith("null") -> flowOf(Token.Null).also { reader.skipCharacters(4) }
+            next5 == "false" -> flowOf(Token.False).also { reader.skipCharacters(5) }
+            next5.startsWith("true") -> flowOf(Token.True).also { reader.skipCharacters(4) }
             else -> null
         }
     }
@@ -278,4 +278,4 @@ sealed class Token(val value: String) {
     override fun hashCode(): Int = value.hashCode()
 }
 
-private fun Int.codepointToString() = String(Character.toChars(this))
+private fun Int.codepointToString() = if (this == -1) "EOF" else String(Character.toChars(this))
